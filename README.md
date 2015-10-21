@@ -1,5 +1,16 @@
 # arazu
+
 A simple tool for helping deploy projects using git
+
+### tl;dr
+
+Arazu is a script to take code from repo A, call its build command, and commit
+the result into repo B. It was created to make deploying static sites trivial
+by pushing the build output into a branch that gets automatically deployed.
+
+
+
+### More Info
 
 Provides single-command management of the build/deploy cycle for projects that
 generate an output folder of some kind (originally for static sites but can be
