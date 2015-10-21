@@ -32,16 +32,16 @@ etc).
 
 ### Quick Start:
 
-clone this repo somewhere then install locally via pip
+#### Install Arazu
 
-```pip -e path/to/arazu```
+```pip -e git+git@github.com:collingreen/arazu```
 
-create a starting template
+#### Create an Arazu Config
 
 ```arazu init```
+--- fill out the template with your project info
 
-fill out the template with your project info
-
+#### Deploy!
 ```arazu deploy```
 
 
