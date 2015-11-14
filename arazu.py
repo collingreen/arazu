@@ -33,13 +33,14 @@ Full Lifecycle:
   `arazu deploy`
     - arazu bails if you have local changes - stash them to continue
     - arazu runs your configured build command
-    - arazu creates a new deploy folder (defaults to .deploy)
+    - arazu creates a new deploy folder
     - arazu clones your deploy repository to the deploy folder and checks
     out your deploy branch
     - arazu copies your configured build output folder to the deploy folder
     - arazu adds everything (using `git add .`) and commits it with a simple
     commit message included the current date/time and the commit hash from
     the source repository.
+    - arazu pushes the commit to the deploy branch of your deploy repo
 """
 
 import argparse
@@ -50,6 +51,7 @@ import yaml
 import subprocess
 import shutil
 import datetime
+import tempfile
 
 DEFAULT_CONFIG_PATH = 'arazu.yaml'
 COMMIT_MESSAGE_FILEPATH = '.arazu_commit_message'
@@ -70,9 +72,6 @@ build-command: "fill this in"
 # folder with build output - this gets commited into the deploy repo
 build-folder: "fill this in"
 
-# temporary folder for gathering everything up and committing
-deploy-folder: .arazu_deploy
-
 # format for commit message - can include {date} and {sha}
 commit-template: |
   Deploy {date}
@@ -84,9 +83,13 @@ commit-template: |
 config_template = yaml.load(CONFIG_TEMPLATE_RAW)
 
 
+class AbortError(Exception):
+    pass
+
+
 def abort(message):
     logging.error('ERROR - ' + message)
-    sys.exit(1)
+    raise AbortError(message)
 
 
 def validate_not_default(config, fields):
@@ -177,12 +180,6 @@ class Arazu(object):
                 + '- commit everything and try again'
                 )
 
-        # create deploy folder
-        deploy_folder = self.config['deploy-folder']
-        if os.path.exists(deploy_folder):
-            msg = 'deploy folder "%s" exists - please delete it and try again'
-            abort(msg % deploy_folder)
-
         # build correct commit message
         logging.info('generating commit message')
         p = subprocess.Popen(
@@ -199,80 +196,110 @@ class Arazu(object):
         if build_command not in ['', None]:
             call_or_fail(build_command)
 
+        # save current path
+        original_path = os.path.abspath(os.curdir)
+
         # create and change to deploy folder
-        logging.debug('creating and changing to deploy folder')
-        os.makedirs(deploy_folder)
+        deploy_folder = tempfile.mkdtemp(prefix='arazu_deploy')
+        logging.debug(
+            'creating and changing to deploy folder %s',
+            deploy_folder
+        )
         os.chdir(deploy_folder)
 
-        # check out repository
-        logging.info('setting up repository')
-        call_or_fail('git init')
-        logging.info('adding deploy remote')
-        call_or_fail('git remote add deploy %s' % self.config['deploy-repo'])
-
-        # change to correct branch
-        deploy_branch = self.config['deploy-branch']
-        logging.info('setting branch "%s"' % deploy_branch)
-        call_or_fail('git fetch deploy')
-        call_or_fail('git checkout deploy/%s' % deploy_branch)
-
-        # copy source folder onto deploy folder
-        build_folder = os.path.join('..', self.config['build-folder'])
-        logging.info('copying build output', build_folder, 'to', deploy_folder)
-        call_or_fail(
-            'cp -r {build_folder} {deploy_folder}'.format(
-                build_folder=build_folder,
-                deploy_folder=deploy_folder
+        # wrap in try so deploy_folder gets cleaned up no matter what
+        try:
+            # check out repository
+            logging.info('setting up repository')
+            call_or_fail('git init')
+            logging.info('adding deploy remote')
+            call_or_fail(
+                'git remote add deploy %s' % self.config['deploy-repo']
             )
-        )
 
-        commit_message = self.config['commit-template'].format(
-            sha=latest_commit_sha,
-            date=str(datetime.datetime.now())
-        )
-        commit_message_filepath = COMMIT_MESSAGE_FILEPATH
-        if self.args.dry_run and not self.args.quiet:
-            print("Dry Run - Commit Message: %s" % commit_message)
-        f = open(commit_message_filepath, 'w')
-        f.write(commit_message)
-        f.close()
+            # change to correct branch
+            deploy_branch = self.config['deploy-branch']
+            logging.info('setting branch "%s"' % deploy_branch)
+            call_or_fail('git fetch deploy')
 
-        # stage and commit files
-        logging.info('adding changes to deploy repository')
-        call_or_fail('git add .')
-        call_or_fail('git commit -F %s' % commit_message_filepath)
+            # use existing branch if it exists
+            result = subprocess.call(
+                'git checkout %s' % deploy_branch,
+                shell=True
+            )
 
-        if self.args.dry_run:
+            if result != 0:
+                logging.info('creating deploy branch "%s"', deploy_branch)
+                call_or_fail('git checkout -b %s' % deploy_branch)
+
+            # copy source folder onto deploy folder
+            build_folder = os.path.join(
+                original_path,
+                self.config['build-folder']
+            )
+            logging.info(
+                'copying build output {build_folder} to deploy folder'.format(
+                    build_folder=build_folder
+                )
+            )
+            build_glob = os.path.join(build_folder, '*')
+            call_or_fail(
+                'cp -r {build_glob} .'.format(
+                    build_glob=build_glob
+                )
+            )
+
+            commit_message = self.config['commit-template'].format(
+                sha=latest_commit_sha,
+                date=str(datetime.datetime.now())
+            )
+            commit_message_filepath = COMMIT_MESSAGE_FILEPATH
+            if self.args.dry_run and not self.args.quiet:
+                print("Dry Run - Commit Message: %s" % commit_message)
+            f = open(commit_message_filepath, 'w')
+            f.write(commit_message)
+            f.close()
+
+            # stage and commit files
+            logging.info('adding changes to deploy repository')
+            call_or_fail('git add .')
+            call_or_fail('git reset %s' % commit_message_filepath)
+            logging.info('creating new deploy commit')
+            call_or_fail('git commit -F %s' % commit_message_filepath)
+
+            if self.args.dry_run:
+                if not self.args.quiet:
+                    print('Dry Run Complete!')
+                    print('Deploy folder is: %s"' % deploy_folder)
+                    print('Delete the deploy folder when finished')
+            else:
+                logging.info('pushing latest build')
+                call_or_fail('git push deploy %s' % deploy_branch)
+
+                # delete commit message
+                logging.info('deleting temp commit message file')
+                os.unlink(commit_message_filepath)
+
             if not self.args.quiet:
-                print(
-                    'Dry Run Complete - view "%s" as necessary' % deploy_folder
-                )
-                print('Delete the deploy folder when finished')
-        else:
-            # logging.info('pushing latest build')
-            # subprocess.call('git push origin %s' % deploy_branch)
+                print('Deploy complete for commit  %s' % latest_commit_sha)
 
-            # delete commit message
-            logging.info('deleting temp commit message file')
-            os.unlink(commit_message_filepath)
+        except AbortError:
+            logging.error(
+                'Something went wrong and arazu aborted your deploy.'
+            )
 
-            # delete deploy folder
-            logging.info('deleting deploy folder')
-            if os.path.exists(deploy_folder):
+        finally:
+            try:
                 logging.info(
-                    'deleting existing deploy_folder "%s"' % deploy_folder
+                    'deleting temporary deploy folder %s' % deploy_folder
                 )
-                try:
-                    shutil.rmtree(deploy_folder)
-                except:
-                    abort(
-                        'failed to delete existing deploy folder "%s"' % (
-                            deploy_folder,
-                        )
-                    )
-
-        if not self.args.quiet:
-            print('Deploy complete for commit  %s' % latest_commit_sha)
+                shutil.rmtree(deploy_folder)
+            # open except - sorry :(
+            except:
+                logging.error(
+                    'Failed to delete deploy folder. Please delete it by hand.'
+                )
+                logging.error(deploy_folder)
 
 
 def main():
