@@ -205,8 +205,9 @@ class Arazu(object):
         os.chdir(deploy_folder)
 
         # check out repository
-        logging.info('setting up deploy repository')
+        logging.info('setting up repository')
         call_or_fail('git init')
+        logging.info('adding deploy remote')
         call_or_fail('git remote add deploy %s' % self.config['deploy-repo'])
 
         # change to correct branch
