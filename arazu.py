@@ -95,6 +95,13 @@ def validate_not_default(config, fields):
             abort('invalid config - you must set the %s value' % field)
 
 
+def call_or_fail(command):
+    proc = subprocess.call(command, shell=True)
+    if proc != 0:
+        sys.exit(1)
+    return proc
+
+
 class Arazu(object):
 
     def __init__(self, args):
@@ -190,7 +197,7 @@ class Arazu(object):
         build_command = self.config['build-command']
         logging.info('running build command "%s"' % build_command)
         if build_command not in ['', None]:
-            subprocess.call(build_command, shell=True)
+            call_or_fail(build_command)
 
         # create and change to deploy folder
         logging.debug('creating and changing to deploy folder')
@@ -198,25 +205,23 @@ class Arazu(object):
         os.chdir(deploy_folder)
 
         # check out repository
-        subprocess.call('git init', shell=True)
-        subprocess.call(
-            'git remote add deploy %s' % self.config['deploy-repo'],
-            shell=True
-        )
         logging.info('setting up deploy repository')
+        call_or_fail('git init')
+        call_or_fail('git remote add deploy %s' % self.config['deploy-repo'])
 
         # change to correct branch
         deploy_branch = self.config['deploy-branch']
-        subprocess.call('git checkout deploy/%s' % deploy_branch, shell=True)
         logging.info('setting branch "%s"' % deploy_branch)
+        call_or_fail('git checkout deploy/%s' % deploy_branch)
 
         # copy source folder onto deploy folder
-        subprocess.call(
+        build_folder = os.path.join('..', self.config['build-folder'])
+        logging.info('copying build output', build_folder, 'to', deploy_folder)
+        call_or_fail(
             'cp -r {build_folder} {deploy_folder}'.format(
-                build_folder=os.path.join('..', self.config['build-folder']),
+                build_folder=build_folder,
                 deploy_folder=deploy_folder
-            ),
-            shell=True
+            )
         )
 
         commit_message = self.config['commit-template'].format(
@@ -231,12 +236,9 @@ class Arazu(object):
         f.close()
 
         # stage and commit files
-        subprocess.call('git add .', shell=True)
-        subprocess.call(
-            'git commit -F %s' % commit_message_filepath,
-            shell=True
-        )
         logging.info('adding changes to deploy repository')
+        call_or_fail('git add .')
+        call_or_fail('git commit -F %s' % commit_message_filepath)
 
         if self.args.dry_run:
             if not self.args.quiet:
