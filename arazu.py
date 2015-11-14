@@ -51,8 +51,6 @@ import subprocess
 import shutil
 import datetime
 
-logger = logging.getLogger('arazu')
-
 DEFAULT_CONFIG_PATH = 'arazu.yaml'
 COMMIT_MESSAGE_FILEPATH = '.arazu_commit_message'
 CONFIG_TEMPLATE_RAW = """# Arazu Config - check this in to source control
@@ -87,7 +85,7 @@ config_template = yaml.load(CONFIG_TEMPLATE_RAW)
 
 
 def abort(message):
-    logger.error('ERROR - ' + message)
+    logging.error('ERROR - ' + message)
     sys.exit(1)
 
 
@@ -160,7 +158,7 @@ class Arazu(object):
         self.parse_config(self.args.config)
 
         # look for local changes
-        logger.info('checking for local changes')
+        logging.info('checking for local changes')
         changes = subprocess.call(
             'git diff --no-ext-diff --quiet --exit-code',
             shell=True
@@ -179,6 +177,7 @@ class Arazu(object):
             abort(msg % deploy_folder)
 
         # build correct commit message
+        logging.info('generating commit message')
         p = subprocess.Popen(
             ['git', 'rev-parse', 'HEAD'],
             # stdin=subprocess.PIPE,
@@ -189,26 +188,27 @@ class Arazu(object):
 
         # run build command
         build_command = self.config['build-command']
-        logger.info('running build command "%s"' % build_command)
+        logging.info('running build command "%s"' % build_command)
         if build_command not in ['', None]:
             subprocess.call(build_command, shell=True)
 
         # create and change to deploy folder
+        logging.debug('creating and changing to deploy folder')
         os.makedirs(deploy_folder)
         os.chdir(deploy_folder)
 
         # check out repository
-        logger.info('setting up deploy repository')
         subprocess.call('git init', shell=True)
         subprocess.call(
             'git remote add deploy %s' % self.config['deploy-repo'],
             shell=True
         )
+        logging.info('setting up deploy repository')
 
         # change to correct branch
         deploy_branch = self.config['deploy-branch']
-        logger.info('setting branch "%s"' % deploy_branch)
         subprocess.call('git checkout deploy/%s' % deploy_branch, shell=True)
+        logging.info('setting branch "%s"' % deploy_branch)
 
         # copy source folder onto deploy folder
         subprocess.call(
@@ -231,12 +231,12 @@ class Arazu(object):
         f.close()
 
         # stage and commit files
-        logger.info('adding changes to deploy repository')
         subprocess.call('git add .', shell=True)
         subprocess.call(
             'git commit -F %s' % commit_message_filepath,
             shell=True
         )
+        logging.info('adding changes to deploy repository')
 
         if self.args.dry_run:
             if not self.args.quiet:
@@ -245,17 +245,17 @@ class Arazu(object):
                 )
                 print('Delete the deploy folder when finished')
         else:
-            logger.info('pushing latest build')
+            # logging.info('pushing latest build')
             # subprocess.call('git push origin %s' % deploy_branch)
 
             # delete commit message
-            logger.info('deleting temp commit message file')
+            logging.info('deleting temp commit message file')
             os.unlink(commit_message_filepath)
 
             # delete deploy folder
-            logger.info('deleting deploy folder')
+            logging.info('deleting deploy folder')
             if os.path.exists(deploy_folder):
-                logger.info(
+                logging.info(
                     'deleting existing deploy_folder "%s"' % deploy_folder
                 )
                 try:
@@ -303,6 +303,9 @@ def main():
     )
 
     args = parser.parse_args()
+
+    level = logging.WARNING if args.quiet else logging.INFO
+    logging.basicConfig(level=level, format='%(message)s')
 
     arazu = Arazu(args)
 
