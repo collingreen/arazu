@@ -213,6 +213,7 @@ class Arazu(object):
         # change to correct branch
         deploy_branch = self.config['deploy-branch']
         logging.info('setting branch "%s"' % deploy_branch)
+        call_or_fail('git fetch deploy')
         call_or_fail('git checkout deploy/%s' % deploy_branch)
 
         # copy source folder onto deploy folder
